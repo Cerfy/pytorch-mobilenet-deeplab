@@ -102,3 +102,11 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+
+
+# Project image files, folders and .pth
+dataset/
+BDD_Deepdrive_Snapshots/
+*.pth
+outputs/
