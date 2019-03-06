@@ -26,13 +26,13 @@ class InvertedResidual(nn.Module):
         # 1x1 Convolution / Bottleneck
         block.append(nn.Conv2d(self.in_channels, self.in_channels*self.t, kernel_size=1, bias=False))
         block.append(nn.BatchNorm2d(self.in_channels*self.t))
-        block.append(nn.ReLU6())
+        block.append(nn.ReLU6(inplace=True))
 
         # 3x3 Depthwise Convolution
         block.append(nn.Conv2d(self.in_channels*self.t, self.in_channels*self.t, kernel_size=3, stride=self.s, padding=self.dilation, 
                                 dilation=self.dilation, groups = self.in_channels*self.t, bias=False ))
         block.append(nn.BatchNorm2d(self.in_channels*self.t))
-        block.append(nn.ReLU6())
+        block.append(nn.ReLU6(inplace=True))
 
         # Linear 1x1 Convolution
         block.append(nn.Conv2d(self.in_channels*self.t, self.out_channels, kernel_size=1, stride=self.s, bias=False))
@@ -124,10 +124,10 @@ class MobileNetv2_DeepLabv3(nn.Module):
 
         self.num_classes = num_classes
 
-        self.s = [2, 1, 2, 2, 2, 1, 1]  # stride of each conv stage
-        self.t = [1, 1, 6, 6, 6, 6, 6]  # expansion factor t
-        self.n = [1, 1, 2, 3, 4, 3, 3]  # number of repeat time
-        self.c = [32, 16, 24, 32, 64, 96, 160]  # output channel of each conv stage
+        self.s = [2, 1, 2, 2, 2, 1, 1, 1]  # stride of each conv stage
+        self.t = [1, 1, 6, 6, 6, 6, 6, 6]  # expansion factor t
+        self.n = [1, 1, 2, 3, 4, 3, 3, 1]  # number of repeat time
+        self.c = [32, 16, 24, 32, 64, 96, 160, 320]  # output channel of each conv stage
 
         block = []
 
@@ -135,10 +135,10 @@ class MobileNetv2_DeepLabv3(nn.Module):
         self.layer1 = nn.Sequential(nn.Conv2d(in_channels=3, out_channels=self.c[0], kernel_size=3, stride=self.s[0], padding=1, bias=False),
                                        nn.BatchNorm2d(self.c[0]),
                                        # nn.Dropout2d(self.dropout_prob, inplace=True),
-                                       nn.ReLU6())
+                                       nn.ReLU6(inplace=True))
 
         # MobileNetV2 second to seventh layer
-        for i in range(6):
+        for i in range(7):
                 block.extend(get_inverted_residual_block_arr(self.c[i], self.c[i+1],
                                                                 t=self.t[i+1], s=self.s[i+1],
                                                                 n=self.n[i+1]))
@@ -155,10 +155,10 @@ class MobileNetv2_DeepLabv3(nn.Module):
         self.layer8 = nn.Sequential(*block)
 
         # # Atrous Spatial Pyramid Pooling Module
-        self.head = nn.Sequential(ASPPModule(160),
-                                    nn.Conv2d(256, num_classes, kernel_size=1, stride=1, padding=0, bias=True))
+        self.head = nn.Sequential(ASPPModule(320),
+                                    nn.Conv2d(512, num_classes, kernel_size=1, stride=1, padding=0, bias=True))
 
-        
+        self.initialize()
 
     def forward(self, x):
         x = self.layer1(x)
@@ -167,7 +167,19 @@ class MobileNetv2_DeepLabv3(nn.Module):
         x = self.head(x)
         return x
 
-        
+    def initialize(self):
+        """
+        Initializes the model parameters
+        """
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+                nn.init.xavier_normal_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
 if __name__ == "__main__":
     model = MobileNetv2_DeepLabv3(3)
     print(model)

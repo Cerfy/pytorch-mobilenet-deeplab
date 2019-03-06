@@ -210,7 +210,7 @@ def main():
     confusion_matrix = np.zeros((args.num_classes,args.num_classes))
     palette = get_palette(256)
     interp = nn.Upsample(size=(h, w), mode='bilinear', align_corners=True)
-
+                                                       
 
 
     if not os.path.exists('outputs'):
@@ -221,20 +221,20 @@ def main():
             print('%d processd'%(index))
         image, label, name, size = batch
         size = size[0].numpy()
-        # with torch.no_grad():
-        #     if args.whole:
-        #         output = predict_multiscale(model, image, input_size, [0.75, 1.0, 1.25, 1.5, 1.75, 2.0], args.num_classes, True, args.recurrence)
-        #     else:
-        #         output = predict_sliding(model, image.numpy(), input_size, args.num_classes, True, args.recurrence)
+        with torch.no_grad():
+            if args.whole:
+                output = predict_multiscale(model, image, input_size, [0.75, 1.0, 1.25, 1.5, 1.75, 2.0], args.num_classes, True, args.recurrence)
+            else:
+                output = predict_sliding(model, image.numpy(), input_size, args.num_classes, True, args.recurrence)
 
-        padded_prediction = model(Variable(image, volatile=True).cuda())
-        output = interp(padded_prediction).cpu().data[0].numpy().transpose(1,2,0)
+        # padded_prediction = model(Variable(image, volatile=True).cuda())
+        # output = interp(padded_prediction).cpu().data[0].numpy().transpose(1,2,0)
         # print(output.shape)
         seg_pred = np.asarray(np.argmax(output, axis=2), dtype=np.uint8)
 
-        output_im = PILImage.fromarray(seg_pred)
-        output_im.putpalette(palette)
-        output_im.save('outputs/'+name[0]+'.png')
+        # output_im = PILImage.fromarray(seg_pred)
+        # output_im.putpalette(palette)
+        # output_im.save('outputs/'+name[0]+'.png')
 
 
         seg_gt = np.asarray(label[0].numpy()[:size[0],:size[1]], dtype=np.int)
