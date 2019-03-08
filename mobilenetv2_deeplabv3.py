@@ -1,81 +1,154 @@
-import torch.nn as nn
-from torch.nn import functional as F
 import math
-import torch.utils.model_zoo as model_zoo
 import torch
-import numpy as np
-
-import sys, os
-
-
-class InvertedResidual(nn.Module):
-
-    def __init__(self, in_channels, out_channels, expansion=6, stride=1, dilation=1):
-        super(InvertedResidual, self).__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.t = expansion
-        self.s = stride
-        self.dilation = dilation
-        self.inverted_residual_block()
-
-    def inverted_residual_block(self):
-
-        block = []
-
-        # 1x1 Convolution / Bottleneck
-        block.append(nn.Conv2d(self.in_channels, self.in_channels*self.t, kernel_size=1, bias=False))
-        block.append(nn.BatchNorm2d(self.in_channels*self.t))
-        block.append(nn.ReLU6(inplace=True))
-
-        # 3x3 Depthwise Convolution
-        block.append(nn.Conv2d(self.in_channels*self.t, self.in_channels*self.t, kernel_size=3, stride=self.s, padding=self.dilation, 
-                                dilation=self.dilation, groups = self.in_channels*self.t, bias=False ))
-        block.append(nn.BatchNorm2d(self.in_channels*self.t))
-        block.append(nn.ReLU6(inplace=True))
-
-        # Linear 1x1 Convolution
-        block.append(nn.Conv2d(self.in_channels*self.t, self.out_channels, kernel_size=1, stride=self.s, bias=False))
-        block.append(nn.BatchNorm2d(self.out_channels))
-
-        self.block = nn.Sequential(*block)
+import torch.nn as nn
+import torch.nn.functional as F
 
 
-        if self.in_channels != self.out_channels and self.s != 2:
-            self.res_conv = nn.Sequential(nn.Conv2d(self.in_channels, self.out_channels, 1, bias=False),
-                                          nn.BatchNorm2d(self.out_channels))
-        else:
-            self.res_conv = None
+from layers import InvertedResidual, conv_bn
+from collections import OrderedDict
+from functools import partial
+
+
+class MobileNetV2ASPP(nn.Module):
+    def __init__(self, n_class=3, in_size=(224, 448), width_mult=1.,
+                 out_sec=256, aspp_sec=(12, 24, 36)):
+        """
+        MobileNetV2Plus: MobileNetV2 based Semantic Segmentation
+        :param n_class:    (int)  Number of classes
+        :param in_size:    (tuple or int) Size of the input image feed to the network
+        :param width_mult: (float) Network width multiplier
+        :param out_sec:    (tuple) Number of the output channels of the ASPP Block
+        :param aspp_sec:   (tuple) Dilation rates used in ASPP
+        """
+        super(MobileNetV2ASPP, self).__init__()
+
+        self.n_class = n_class
+        # setting of inverted residual blocks
+        self.interverted_residual_setting = [
+            # t, c, n, s, d
+            [1, 16, 1, 1, 1],    # 1/2
+            [6, 24, 2, 2, 1],    # 1/4
+            [6, 32, 3, 2, 1],    # 1/8
+            [6, 64, 4, 1, 2],    # 1/8
+            [6, 96, 3, 1, 4],    # 1/8
+            [6, 160, 3, 1, 8],   # 1/8
+            [6, 320, 1, 1, 16],  # 1/8
+        ]
+
+        # building first layer
+        assert in_size[0] % 8 == 0
+        assert in_size[1] % 8 == 0
+
+        self.input_size = in_size
+
+        input_channel = int(32 * width_mult)
+        self.mod1 = nn.Sequential(OrderedDict([("conv1", conv_bn(inp=3, oup=input_channel, stride=2))]))
+
+        # building inverted residual blocks
+        mod_id = 0
+        for t, c, n, s, d in self.interverted_residual_setting:
+            output_channel = int(c * width_mult)
+
+            # Create blocks for module
+            blocks = []
+            for block_id in range(n):
+                if block_id == 0 and s == 2:
+                    blocks.append(("block%d" % (block_id + 1), InvertedResidual(inp=input_channel,
+                                                                                oup=output_channel,
+                                                                                stride=s,
+                                                                                dilate=1,
+                                                                                expand_ratio=t)))
+                else:
+                    blocks.append(("block%d" % (block_id + 1), InvertedResidual(inp=input_channel,
+                                                                                oup=output_channel,
+                                                                                stride=1,
+                                                                                dilate=d,
+                                                                                expand_ratio=t)))
+
+                input_channel = output_channel
+
+            self.add_module("mod%d" % (mod_id + 2), nn.Sequential(OrderedDict(blocks)))
+            mod_id += 1
+
+        # building last several layers
+        org_last_chns = (self.interverted_residual_setting[0][1] +
+                         self.interverted_residual_setting[1][1] +
+                         self.interverted_residual_setting[2][1] +
+                         self.interverted_residual_setting[3][1] +
+                         self.interverted_residual_setting[4][1] +
+                         self.interverted_residual_setting[5][1] +
+                         self.interverted_residual_setting[6][1])
+
+
+        self.aspp = nn.Sequential(ASPPModule(320),
+                                    nn.Conv2d(512, n_class, kernel_size=1, stride=1, padding=0, bias=True))
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2.0 / n))
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+            elif isinstance(m, nn.Linear):
+                m.weight.data.normal_(0, 0.01)
+                m.bias.data.zero_()
+
+    # +++++++++++++++++++++++++++++++++++++++++++++++++++ #
+    # channel_shuffle: shuffle channels in groups
+    # +++++++++++++++++++++++++++++++++++++++++++++++++++ #
+    @staticmethod
+    def _channel_shuffle(x, groups):
+        """
+            Channel shuffle operation
+            :param x: input tensor
+            :param groups: split channels into groups
+            :return: channel shuffled tensor
+        """
+        batch_size, num_channels, height, width = x.data.size()
+        channels_per_group = num_channels // groups
+
+        # reshape
+        x = x.view(batch_size, groups, channels_per_group, height, width)
+
+        # transpose
+        # - contiguous() required if transpose() is used before view().
+        #   See https://github.com/pytorch/pytorch/issues/764
+        x = torch.transpose(x, 1, 2).contiguous().view(batch_size, -1, height, width)
+
+        return x
 
     def forward(self, x):
-        if self.s == 1:
-            # Use residual connection
-            if self.res_conv is None:
-                out = x + self.block(x)
-            else:
-                out = self.res_conv(x) + self.block(x)
+        # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ #
+        # 1. Encoder: feature extraction
+        # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ #
+        stg1 = self.mod1(x)     # (N, 32,   224, 448)  1/2
+        stg1 = self.mod2(stg1)  # (N, 16,   224, 448)  1/2 -> 1/4 -> 1/8
+        stg2 = self.mod3(stg1)  # (N, 24,   112, 224)  1/4 -> 1/8
+        stg3 = self.mod4(stg2)  # (N, 32,   56,  112)  1/8
+        stg4 = self.mod5(stg3)  # (N, 64,   56,  112)  1/8 dilation=2
+        stg5 = self.mod6(stg4)  # (N, 96,   56,  112)  1/8 dilation=4
+        stg6 = self.mod7(stg5)  # (N, 160,  56,  112)  1/8 dilation=8
+        stg7 = self.mod8(stg6)  # (N, 320,  56,  112)  1/8 dilation=16
 
-        else:
-            out = self.block(x)
 
-        return out
+        # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ #
+        # 2. Classifier: pixel-wise classification-segmentation
+        # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ #
 
+        stg8 = self.aspp(stg7)
+        
 
-def get_inverted_residual_block_arr(in_, out_, t=6, s=1, n=1):
-    block = []
-    block.append(InvertedResidual(in_, out_, t, s))
-    for i in range(n-1):
-        block.append(InvertedResidual(out_, out_, t, 1))
-    return block
+        return stg8
 
 
 
 class ASPPModule(nn.Module):
     """
-
-    The ASPP module implemented by Speedinghzl in the pytorch-segmentation-toolbox Github Repository.
-    The link can be found here. https://github.com/speedinghzl/pytorch-segmentation-toolbox
-
     Reference: 
         Chen, Liang-Chieh, et al. *"Rethinking Atrous Convolution for Semantic Image Segmentation."*
     """
@@ -117,70 +190,63 @@ class ASPPModule(nn.Module):
         bottle = self.bottleneck(out)
         return bottle
 
+if __name__ == '__main__':
+    import time
+    import torch
+    from torch.autograd import Variable
 
-class MobileNetv2_DeepLabv3(nn.Module):
-    def __init__(self, num_classes):
-        super(MobileNetv2_DeepLabv3, self).__init__()
 
-        self.num_classes = num_classes
+    model = MobileNetV2ASPP(n_class=3)
 
-        self.s = [2, 1, 2, 2, 2, 1, 1, 1]  # stride of each conv stage
-        self.t = [1, 1, 6, 6, 6, 6, 6, 6]  # expansion factor t
-        self.n = [1, 1, 2, 3, 4, 3, 3, 1]  # number of repeat time
-        self.c = [32, 16, 24, 32, 64, 96, 160, 320]  # output channel of each conv stage
 
-        block = []
+    # print(model.state_dict())
+    pretrained_cityscapes = torch.load("./dataset/aspp_pretrained.pth")
 
-        # MobileNetV2 first layer
-        self.layer1 = nn.Sequential(nn.Conv2d(in_channels=3, out_channels=self.c[0], kernel_size=3, stride=self.s[0], padding=1, bias=False),
-                                       nn.BatchNorm2d(self.c[0]),
-                                       # nn.Dropout2d(self.dropout_prob, inplace=True),
-                                       nn.ReLU6(inplace=True))
+    # new_params = model.state_dict().copy()
+    # for name, value in pretrained_cityscapes.items():
+    #     new_params['.'.join(name.split('.')[1:])] = value
 
-        # MobileNetV2 second to seventh layer
-        for i in range(7):
-                block.extend(get_inverted_residual_block_arr(self.c[i], self.c[i+1],
-                                                                t=self.t[i+1], s=self.s[i+1],
-                                                                n=self.n[i+1]))
-        self.layer2to7 = nn.Sequential(*block)
+    # model.load_state_dict(pretrained_cityscapes, strict=False)
+    # print(model.state_dict())
+    # model_dict = model.state_dict()
+    # # print(model_dict)
+    # new_params = model.state_dict().copy
 
-        block.clear()
+    # for name, value in pretrained_cityscapes.items():
+    #     name_parts = name.split('.')
+    #     newName = '.'.join(name_parts[1:])
+    #     new_params[newName] = pretrained_cityscapes[value] 
 
-        # Atrous convolution layers follows the structure of MobileNet 7th Layer parameters
-        # The multigrid used here assumed to be (1,2,4) where the dilation rates = 2 which produces (2,4,8)
-        block.append(InvertedResidual(self.c[-1], self.c[-1], expansion=self.t[-1], stride=1, dilation=2))
-        block.append(InvertedResidual(self.c[-1], self.c[-1], expansion=self.t[-1], stride=1, dilation=4))
-        block.append(InvertedResidual(self.c[-1], self.c[-1], expansion=self.t[-1], stride=1, dilation=8))
-        
-        self.layer8 = nn.Sequential(*block)
+    # model.load_state_dict(pretrained_cityscapes, strict=False)
 
-        # # Atrous Spatial Pyramid Pooling Module
-        self.head = nn.Sequential(ASPPModule(320),
-                                    nn.Conv2d(512, num_classes, kernel_size=1, stride=1, padding=0, bias=True))
+    # print(model.state_dict())
+    # keys = list(pretrained_cityscapes.keys())
+    # keys.sort()
+    # for k in keys:
+    #     if "sdaspp" in k:
+    #         pretrained_cityscapes.pop(k)
+    #     if "mod1" in k:
+    #         pretrained_cityscapes.pop(k)
+    #     if "mod2" in k:
+    #         pretrained_cityscapes.pop(k)
+    #     if "mod3" in k:
+    #         pretrained_cityscapes.pop(k)
+    #     if "mod4" in k:
+    #         pretrained_cityscapes.pop(k)
+    #     if "mod5" in k:
+    #         pretrained_cityscapes.pop(k)
+    #     if "mod6" in k:
+    #         pretrained_cityscapes.pop(k)
+    #     if "mod7" in k:
+    #         pretrained_cityscapes.pop(k)
+    #     if "mod8" in k:
+    #         pretrained_cityscapes.pop(k)
+    #     if "score" in k:
+    #         pretrained_cityscapes.pop(k)
+    #     if "out_se" in k:
+    #         pretrained_cityscapes.pop(k)
+    #     if "last_channel" in k:
+    #         pretrained_cityscapes.pop(k)
+    # print(pretrained_cityscapes)
 
-        self.initialize()
-
-    def forward(self, x):
-        x = self.layer1(x)
-        x = self.layer2to7(x)
-        x = self.layer8(x)
-        x = self.head(x)
-        return x
-
-    def initialize(self):
-        """
-        Initializes the model parameters
-        """
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
-                nn.init.xavier_normal_(m.weight)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-if __name__ == "__main__":
-    model = MobileNetv2_DeepLabv3(3)
-    print(model)
-
+    # torch.save(model.state_dict(), "./aspp_pretrained.pth")

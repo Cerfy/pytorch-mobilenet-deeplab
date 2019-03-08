@@ -12,7 +12,7 @@ import torch.backends.cudnn as cudnn
 import sys
 import os
 import os.path as osp
-from mobilenetv2_deeplabv3 import MobileNetv2_DeepLabv3
+from mobilenetv2_deeplabv3 import MobileNetV2ASPP
 from datasets import BerkeleyDataset
 import random
 import timeit
@@ -28,17 +28,17 @@ BATCH_SIZE = 8
 DATA_DIRECTORY = 'D:/BDD_Deepdrive/bdd100k/'
 DATA_LIST_PATH = './dataset/list/BDD_train.txt'
 IGNORE_LABEL = 255
-INPUT_SIZE = '321,321'
+INPUT_SIZE = '224,448'
 LEARNING_RATE = 2.5e-4
 MOMENTUM = 0.9
 NUM_CLASSES = 3
 NUM_STEPS = 20000
 POWER = 0.9
 RANDOM_SEED = 1234
-RESTORE_FROM = './dataset/ImageNet_pretrain.pth'
+RESTORE_FROM = './dataset/pretrained_cityscapes.pth'
 SAVE_NUM_IMAGES = 2
 SAVE_PRED_EVERY = 1000
-SNAPSHOT_DIR = './BDD_Deepdrive_Snapshots/'
+SNAPSHOT_DIR = './test/'
 WEIGHT_DECAY = 0.0005
 
 
@@ -113,8 +113,6 @@ def adjust_learning_rate(optimizer, i_iter):
     optimizer.param_groups[0]['lr'] = lr
     return lr
 
-
-
 def main():
     if not args.gpu == 'None':
         os.environ["CUDA_VISIBLE_DEVICES"]=str(args.gpu)
@@ -123,27 +121,18 @@ def main():
 
     cudnn.enabled = True
 
-    model = MobileNetv2_DeepLabv3(num_classes=args.num_classes)
+    model = MobileNetV2ASPP(n_class=args.num_classes)
+
+
     # print(model) # Check number of classes
+    pretrained_cityscapes = torch.load(args.restore_from)
+    # # # print(pretrained_imagenet)
 
-    # pretrained_imagenet = torch.load(args.restore_from)
-    # # print(pretrained_imagenet)
-    # model.load_state_dict(pretrained_imagenet, strict=False)
-
-    # model_keys = list(model.state_dict().keys())
-    # model_weights = list(model.state_dict().values())
-    # index = 0
-    # for w in pretrained_imagenet.values():
-    #     if model_weights[index].shape == w.shape:
-    #         model.state_dict()[model_keys[index]] = w
-    #         print('Store weight in %s layer' % model_keys[index])
-    #     index += 1
-
-    # torch.save(model.state_dict(), './ImageNet_pretrain.pth')
-
+    model.load_state_dict(pretrained_cityscapes, strict=False)
 
     model.train()
     model.cuda()
+
 
     cudnn.benchmark = True
 
@@ -154,6 +143,7 @@ def main():
     berkeleyDataset = BerkeleyDataset(args.data_dir, args.data_list, max_iters=args.num_steps*args.batch_size, scale=args.random_scale, mirror=args.random_mirror, mean=IMG_MEAN)
 
     train_loader = data.DataLoader(berkeleyDataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True) 
+
 
     optimizer = optim.SGD([{'params': filter(lambda p: p.requires_grad, model.parameters()), 'lr': args.learning_rate }], 
                 lr=args.learning_rate, momentum=args.momentum,weight_decay=args.weight_decay)
