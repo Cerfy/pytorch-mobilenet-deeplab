@@ -123,9 +123,7 @@ class MobileNetV2ASPP(nn.Module):
         return x
 
     def forward(self, x):
-        # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ #
-        # 1. Encoder: feature extraction
-        # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ #
+
         stg1 = self.mod1(x)     # (N, 32,   224, 448)  1/2
         stg1 = self.mod2(stg1)  # (N, 16,   224, 448)  1/2 -> 1/4 -> 1/8
         stg2 = self.mod3(stg1)  # (N, 24,   112, 224)  1/4 -> 1/8
@@ -135,10 +133,6 @@ class MobileNetV2ASPP(nn.Module):
         stg6 = self.mod7(stg5)  # (N, 160,  56,  112)  1/8 dilation=8
         stg7 = self.mod8(stg6)  # (N, 320,  56,  112)  1/8 dilation=16
 
-
-        # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ #
-        # 2. Classifier: pixel-wise classification-segmentation
-        # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ #
 
         stg8 = self.aspp(stg7)
         
