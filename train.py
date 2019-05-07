@@ -113,6 +113,10 @@ def adjust_learning_rate(optimizer, i_iter):
     optimizer.param_groups[0]['lr'] = lr
     return lr
 
+
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
 def main():
     if not args.gpu == 'None':
         os.environ["CUDA_VISIBLE_DEVICES"]=str(args.gpu)
@@ -122,7 +126,8 @@ def main():
     cudnn.enabled = True
 
     model = MobileNetV2ASPP(n_class=args.num_classes)
-
+    print(count_parameters(model))
+    input()
 
     # print(model) # Check number of classes
     pretrained_cityscapes = torch.load(args.restore_from)
@@ -140,7 +145,8 @@ def main():
         print("Creating Checkpoint Folder")
         os.makedirs(args.snapshot_dir)
 
-    berkeleyDataset = BerkeleyDataset(args.data_dir, args.data_list, max_iters=args.num_steps*args.batch_size, scale=args.random_scale, mirror=args.random_mirror, mean=IMG_MEAN)
+    berkeleyDataset = BerkeleyDataset(args.data_dir, args.data_list, max_iters=args.num_steps*args.batch_size, 
+    									scale=args.random_scale, mirror=args.random_mirror, mean=IMG_MEAN)
 
     train_loader = data.DataLoader(berkeleyDataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True) 
 
@@ -160,7 +166,7 @@ def main():
         optimizer.zero_grad()
         lr = adjust_learning_rate(optimizer, i_iter)
         pred = interp(model(images))
-
+        input()
 
         loss = loss_calc(pred, labels)
 

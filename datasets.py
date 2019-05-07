@@ -92,7 +92,38 @@ class BerkeleyDataset(data.Dataset):
         return image.copy(), label.copy(), name, np.array(size)
 
 
+class SingaporeDataset(data.Dataset):
+    def __init__(self, root, list_path, crop_size=(505, 505), mean=(128, 128, 128)):
+        self.root = root
+        self.list_path = list_path
+        self.crop_h, self.crop_w = crop_size
+        self.mean = mean
+        self.img_ids = [i_id.strip() for i_id in open(list_path)]
+        self.files = [] 
+        for name in self.img_ids:
+            img_file = osp.join(self.root, "{}.png".format(name))       
+            self.files.append({
+                "img": img_file,
+                "name": name
+            })
 
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, index):
+        datafiles = self.files[index]
+        image = cv2.imread(datafiles["img"], cv2.IMREAD_COLOR)
+        size = image.shape
+
+        image = cv2.resize(image, None, fx=321/size[1], fy=321/size[0], interpolation = cv2.INTER_LINEAR)
+
+        name = datafiles["name"]
+        image = np.asarray(image, np.float32)
+        image -= self.mean
+
+        image = image.transpose((2, 0, 1))
+        return image, name, np.array(size)
+        
 # if __name__ == "__main__":
     # import matplotlib.pyplot as plt
     # import sys

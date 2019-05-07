@@ -182,6 +182,7 @@ class ASPPModule(nn.Module):
         out = torch.cat((feat1, feat2, feat3, feat4, feat5), 1)
 
         bottle = self.bottleneck(out)
+
         return bottle
 
 if __name__ == '__main__':
@@ -191,10 +192,10 @@ if __name__ == '__main__':
 
 
     model = MobileNetV2ASPP(n_class=3)
-
+    print(model)
 
     # print(model.state_dict())
-    pretrained_cityscapes = torch.load("./dataset/aspp_pretrained.pth")
+    # pretrained_cityscapes = torch.load("./dataset/aspp_pretrained.pth")
 
     # new_params = model.state_dict().copy()
     # for name, value in pretrained_cityscapes.items():

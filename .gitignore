@@ -108,5 +108,16 @@ venv.bak/
 # Project image files, folders and .pth
 dataset/
 BDD_Deepdrive_Snapshots/
+SG_DrivingMasked
+SG_Overlaid
+outputs_without_pretrainedweights
+outputs
+MobileNetWithoutPretrainedWeights
 *.pth
 outputs/
+BDDMasked/
+MobileNetV2_SG_Driving_overlayed.mp4
+image2video.py
+result.txt
+resultMobileNetPretrained.txt
+resultMobileNetV2_without_pretrained.txt

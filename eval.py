@@ -11,21 +11,25 @@ from torch.autograd import Variable
 import torchvision.models as models
 import torch.nn.functional as F
 from torch.utils import data
-from test import MobileNetV2ASPP
+from mobilenetv2_deeplabv3 import MobileNetV2ASPP
 from datasets import BerkeleyDataset
+from datasets import SingaporeDataset
 from collections import OrderedDict
 import os
 import scipy.ndimage as nd
 from math import ceil
 from PIL import Image as PILImage
-
 import torch.nn as nn
-
+import matplotlib.pyplot as plt
+from matplotlib import colors
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 IMG_MEAN = np.array((104.00698793,116.66876762,122.67891434), dtype=np.float32)
 
 DATA_DIRECTORY = 'D:/BDD_Deepdrive/bdd100k/'
 DATA_LIST_PATH = './dataset/list/BDD_val.txt'
+# DATA_DIRECTORY = './SG_Driving'
+# DATA_LIST_PATH = './dataset/list/SG_Driving.txt'
 IGNORE_LABEL = 255
 NUM_CLASSES = 3
 NUM_STEPS = 10000 # Number of images in the validation set.
@@ -171,22 +175,25 @@ def get_confusion_matrix(gt_label, pred_label, class_num):
         :param class_num: the nunber of class
         :return: the confusion matrix
         """
+
         index = (gt_label * class_num + pred_label).astype('int32')
-        label_count = np.bincount(index)
+
+        label_count = np.bincount(index) # counts number of occurences of each value
+
         confusion_matrix = np.zeros((class_num, class_num))
 
         for i_label in range(class_num):
             for i_pred_label in range(class_num):
                 cur_index = i_label * class_num + i_pred_label
                 if cur_index < len(label_count):
+                    # If it's not out of bound 
                     confusion_matrix[i_label, i_pred_label] = label_count[cur_index]
 
         return confusion_matrix
 
+
+
 def show_all(pred, ground_truth=None, name=None):
-    import matplotlib.pyplot as plt
-    from matplotlib import colors
-    from mpl_toolkits.axes_grid1 import make_axes_locatable
 
     fig, axes = plt.subplots(1, 2, figsize=(15, 15))
     ax1, ax2 = axes
@@ -202,7 +209,7 @@ def show_all(pred, ground_truth=None, name=None):
     norm = colors.BoundaryNorm(bounds, cmap.N)
 
 
-    plt.imsave("./BDDMasked/" + name[0] + "_masked", pred, cmap=cmap)
+    plt.imsave("./SG_DrivingMasked/" + name[0] + "_masked", pred, cmap=cmap)
     plt.close()
 
     # ax1.set_title('ground_truth')
@@ -239,57 +246,87 @@ def main():
     data_list = []
     confusion_matrix = np.zeros((args.num_classes,args.num_classes))
     palette = get_palette(256)
-    interp = nn.Upsample(size=(720, 1280), mode='bilinear', align_corners=True)
-                                                       
+    # interp = nn.Upsample(size=(720, 1280), mode='bilinear', align_corners=True)
+    # interp = nn.Upsample(size=(1080, 1920), mode='bilinear', align_corners=True)
+    interp = nn.Upsample(size=(224, 448), mode='bilinear', align_corners=True)                                                
 
 
-    if not os.path.exists('outputs'):
-        os.makedirs('outputs')
+    if not os.path.exists('SG_DrivingMasked'):
+        os.makedirs('SG_DrivingMasked')
 
-    for index, batch in enumerate(testloader):
-        if index % 100 == 0:
-            print('%d processd'%(index))
-        image, label, name, size = batch
-        size = size[0].numpy()
+    with torch.no_grad():
+        for index, batch in enumerate(testloader):
+            if index % 100 == 0:
+                print('%d processd'%(index))
+
+
+            image, label, name, size = batch
+            size = size[0].numpy()
+            break
         # with torch.no_grad():
         #     if args.whole:
         #         output = predict_multiscale(model, image, input_size, [0.75, 1.0, 1.25, 1.5, 1.75, 2.0], args.num_classes, True, args.recurrence)
         #     else:
         #         output = predict_sliding(model, image.numpy(), input_size, args.num_classes, True, args.recurrence)
 
-
+        
         padded_prediction = model(Variable(image, volatile=True).cuda())
         output = interp(padded_prediction).cpu().data[0].numpy().transpose(1,2,0)
+    
 
         seg_pred = np.asarray(np.argmax(output, axis=2), dtype=np.uint8)
         
-        show_all(seg_pred, name=name)
+        # show_all(seg_pred, name=name)
+
 
         # output_im = PILImage.fromarray(seg_pred)
         # output_im.putpalette(palette)
         # output_im.save('outputs/'+name[0]+'.png')
 
-        # seg_gt = np.asarray(label[0].numpy()[:size[0],:size[1]], dtype=np.int)
+        seg_gt = np.asarray(label[0].numpy()[:size[0],:size[1]], dtype=np.int)
     
-    #     ignore_index = seg_gt != 255
-    #     seg_gt = seg_gt[ignore_index]
-    #     seg_pred = seg_pred[ignore_index]
+        ignore_index = seg_gt != 255
+        seg_gt = seg_gt[ignore_index]
+        seg_pred = seg_pred[ignore_index]
     #     # show_all(gt, output)
+        
+        confusion_matrix += get_confusion_matrix(seg_gt, seg_pred, args.num_classes)
+
+    pos = confusion_matrix.sum(1)
+    res = confusion_matrix.sum(0)
+    tp = np.diag(confusion_matrix)
+
+    IU_array = (tp / np.maximum(1.0, pos + res - tp))
 
 
-    #     confusion_matrix += get_confusion_matrix(seg_gt, seg_pred, args.num_classes)
+    mean_IU = IU_array.mean()
 
-    # pos = confusion_matrix.sum(1)
-    # res = confusion_matrix.sum(0)
-    # tp = np.diag(confusion_matrix)
-
-    # IU_array = (tp / np.maximum(1.0, pos + res - tp))
-    # mean_IU = IU_array.mean()
     
     # # getConfusionMatrixPlot(confusion_matrix)
     # print({'meanIU':mean_IU, 'IU_array':IU_array})
     # with open('resultTest.txt', 'w') as f:
     #     f.write(json.dumps({'meanIU':mean_IU, 'IU_array':IU_array.tolist()}))
+
+
+
+
+    # test_loader = data.DataLoader(SingaporeDataset(args.data_dir, args.data_list, mean=IMG_MEAN))
+    # # masked_directory = 'D:/PyTorch-DeepLab-Berkeley/BDDMasked/'
+    # # #Evaluation loop for Test Loader 
+    # with torch.no_grad():
+    #     for index, batch in enumerate(test_loader):
+    #         if index % 100 == 0:
+    #             print('%d processd'%(index))
+    #         image, name, size = batch
+            # h, w, c = size[0].numpy()
+            # # print(name)
+            # padded_prediction = model(Variable(image, volatile=True).cuda())
+            # output = interp(padded_prediction).cpu().data[0].numpy().transpose(1,2,0)
+            # seg_pred = np.asarray(np.argmax(output, axis=2), dtype=np.uint8)
+        
+            # show_all(seg_pred, name=name)
+            # overlay(name, './SG_Driving/', "./SG_DrivingMasked/")
+
 
 if __name__ == '__main__':
     main()
